@@ -56,5 +56,5 @@ NODE_CLASS_MAPPINGS = {
     "StudioFury_AdvancedPrompt": StudioFury_AdvancedPrompt
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "StudioFury_AdvancedPrompt": get_lang_text("Fury Advanced Prompt 📝", "Fury Prompt Avanzado 📝")
+    "StudioFury_AdvancedPrompt": get_lang_text("Advanced Prompt 📝", "Prompt Avanzado 📝")
 }
