@@ -15,11 +15,20 @@ class StudioFury_AdvancedPrompt:
         return {
             "required": {
                 "clip": ("CLIP",),
-                "style": ("STRING", {"multiline": True, "default": "Masterpiece, best quality, photorealistic", "placeholder": get_lang_text("Style (Anime, Realistic...)", "Estilo (Anime, Realista...)")}),
-                "camera": ("STRING", {"multiline": True, "default": "8k, sharp focus", "placeholder": get_lang_text("Camera (Angles, Zoom...)", "Cámara (Angular, Zoom...)")}),
-                "subject": ("STRING", {"multiline": True, "default": "A beautiful woman", "placeholder": get_lang_text("Subject (Description)", "Sujeto (Descripción)")}),
-                "scene": ("STRING", {"multiline": True, "default": "Standing in a garden", "placeholder": get_lang_text("Scene (Action)", "Escena (Acción)")}),
-                "environment": ("STRING", {"multiline": True, "default": "Sunset, dynamic lighting", "placeholder": get_lang_text("Environment (Lighting, Details)", "Entorno (Luces, Detalles)")}),
+
+                # --- NUEVO CAMPO: CALIDAD (El primero de la lista) ---
+                "quality": ("STRING", {
+                    "multiline": True,
+                    "default": "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up",
+                    "placeholder": get_lang_text("Quality (Score tags, Masterpiece...)", "Calidad (Puntuación, Masterpiece...)")
+                }),
+
+                "style": ("STRING", {"multiline": True, "default": "source_anime, best quality", "placeholder": get_lang_text("Style (Anime, Realistic...)", "Estilo (Anime, Realista...)")}),
+                "camera": ("STRING", {"multiline": True, "default": "", "placeholder": get_lang_text("Camera (Angles, Zoom...)", "Cámara (Angular, Zoom...)")}),
+                "subject": ("STRING", {"multiline": True, "default": "", "placeholder": get_lang_text("Subject (Description)", "Sujeto (Descripción)")}),
+                "scene": ("STRING", {"multiline": True, "default": "", "placeholder": get_lang_text("Scene (Action)", "Escena (Acción)")}),
+                "environment": ("STRING", {"multiline": True, "default": "", "placeholder": get_lang_text("Environment (Lighting, Details)", "Entorno (Luces, Detalles)")}),
+
                 "negative_prompt": ("STRING", {"multiline": True, "default": "text, watermark, low quality", "placeholder": get_lang_text("Negative Prompt", "Prompt Negativo")}),
             },
             "optional": {
@@ -33,17 +42,19 @@ class StudioFury_AdvancedPrompt:
     FUNCTION = "execute"
     CATEGORY = "🧩 Studio Fury/📝 Prompts"
 
-    def execute(self, clip, style, camera, subject, scene, environment, negative_prompt, embeddings_pos="", embeddings_neg=""):
-        # 1. Construir Texto
-        parts_pos = [embeddings_pos, style, camera, subject, scene, environment]
+    def execute(self, clip, quality, style, camera, subject, scene, environment, negative_prompt, embeddings_pos="", embeddings_neg=""):
+        # 1. Construir Prompt Positivo
+        # ORDEN: Calidad -> Embeddings -> Estilo -> Cámara -> Sujeto -> Escena -> Entorno
+        parts_pos = [quality, embeddings_pos, style, camera, subject, scene, environment]
+
+        # Limpieza y unión
         final_pos_text = ", ".join([p.strip() for p in parts_pos if p and p.strip() != ""])
 
+        # 2. Construir Prompt Negativo
         parts_neg = [embeddings_neg, negative_prompt]
         final_neg_text = ", ".join([p.strip() for p in parts_neg if p and p.strip() != ""])
 
-        # 2. Codificar con CLIP (LA CORRECCIÓN ESTÁ AQUÍ)
-        # Usamos return_pooled=True en lugar de return_dict=True
-
+        # 3. Codificar con CLIP (Usando return_pooled=True para KSampler)
         tokens_pos = clip.tokenize(final_pos_text)
         cond_pos, pooled_pos = clip.encode_from_tokens(tokens_pos, return_pooled=True)
 
