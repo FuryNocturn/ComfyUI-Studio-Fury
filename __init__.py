@@ -5,18 +5,46 @@ import importlib.util
 import traceback
 import folder_paths
 import filecmp
+# --- NUEVOS IMPORTS NECESARIOS PARA EL BOTÓN DE APAGADO ---
+from server import PromptServer
+from aiohttp import web
 
 # ==============================================================================
 # CONFIGURACIÓN DEL SISTEMA
 # ==============================================================================
 
 EXTENSION_NAME = "StudioFury"
-NODE_CATEGORIES = ["prompts"] # Añade aquí tus categorías futuras (images, utils...)
+# Asegúrate de que estas carpetas existan o el sistema dará error al cargar
+NODE_CATEGORIES = ["prompts", "dataset", "director"] # Añade aquí tus categorías futuras (images, utils...)
 ASSET_FOLDERS = ["js", "css", "assets", "lib", "fonts"]
 DEBUG_MODE = True
 
 # ==============================================================================
-# PARTE 1: GESTOR DE ASSETS (Frontend / Javascript)
+# PARTE 1: API DE APAGADO (KILL SWITCH)
+# Esta función escucha la petición del botón rojo y cierra Python.
+# ==============================================================================
+try:
+    routes = PromptServer.instance.routes
+
+    @routes.post('/studiofury/system/shutdown')
+    async def fury_shutdown(request):
+        """
+        Recibe la orden del navegador y mata el proceso de Python inmediatamente.
+        """
+        print("\n🛑 [StudioFury] Recibida orden de apagado. Cerrando sistema...")
+
+        # Preparamos una respuesta rápida
+        resp = web.Response(text="Server Killed")
+
+        # Forzamos el cierre del proceso inmediatamente
+        os._exit(0)
+
+        return resp
+except Exception as e:
+    print(f"⚠️ [StudioFury] No se pudo cargar la API de apagado (¿Quizás ComfyUI está desactualizado?): {e}")
+
+# ==============================================================================
+# PARTE 2: GESTOR DE ASSETS (Frontend / Javascript)
 # Mantiene la estructura de carpetas original para evitar conflictos de nombres.
 # ==============================================================================
 def install_web_assets():
@@ -76,7 +104,7 @@ def install_web_assets():
         print(f"✅ [StudioFury] Actualizados {copied_count} archivos.")
 
 # ==============================================================================
-# PARTE 2: CARGADOR DE NODOS (Backend / Python)
+# PARTE 3: CARGADOR DE NODOS (Backend / Python)
 # ==============================================================================
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
@@ -127,6 +155,6 @@ load_nodes()
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
 
-# Nota: Al copiar los archivos manualmente, WEB_DIRECTORY es menos crítico,
-# pero podemos dejarlo apuntando a la raíz por compatibilidad.
-WEB_DIRECTORY = "./"
+# NO DEFINIMOS WEB_DIRECTORY.
+# Al no definirlo, ComfyUI no intentará sobrescribir tu trabajo.
+# Simplemente leerá lo que 'install_web_assets' colocó en web/extensions/StudioFury.
