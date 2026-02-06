@@ -1,13 +1,16 @@
 [project]
-name = "ComfyUI-Studio-Fury"
+name = "studio-fury"
 description = "Nodos custom, al estilo fury, nodos que añaden versatilidad. con el tiempo ira creciendo los nodos."
-version = { file = "VERSION" }
+version = "1.2.6"
 license = { file = "LICENSE" }
 
 [project.urls]
 Repository = "https://github.com/FuryNocturn/ComfyUI-Studio-Fury"
+Documentation = "https://github.com/FuryNocturn/ComfyUI-Studio-Fury/wiki"
+"Bug Tracker" = "https://github.com/FuryNocturn/ComfyUI-Studio-Fury/issues"
 
 [tool.comfy]
 PublisherId = "FuryNocturnTV"
-DisplayName = "ComfyUI-Studio-Fury"
-Icon = "🧩"
+DisplayName = "StudioFury"
+Icon = "https://github.com/FuryNocturn/ComfyUI-Studio-Fury/blob/master/ico/ICO.png"
+Banner = "https://github.com/FuryNocturn/ComfyUI-Studio-Fury/blob/master/ico/Banner.png"

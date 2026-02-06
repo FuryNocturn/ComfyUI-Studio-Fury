@@ -62,4 +62,4 @@ class SF_SmartSaver:
         return {}
 
 NODE_CLASS_MAPPINGS = { "SF_SmartSaver": SF_SmartSaver }
-NODE_DISPLAY_NAME_MAPPINGS = { "SF_SmartSaver": "💾 Smart Saver (Auto-Path)" }
+NODE_DISPLAY_NAME_MAPPINGS = { "SF_SmartSaver": "💾 Smart Saver (PREVIEW or Auto-Path)" }

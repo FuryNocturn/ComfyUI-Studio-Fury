@@ -17,7 +17,7 @@ EXTENSION_NAME = "StudioFury"
 # Asegúrate de que estas carpetas existan o el sistema dará error al cargar
 NODE_CATEGORIES = ["prompts", "dataset", "director"] # Añade aquí tus categorías futuras (images, utils...)
 ASSET_FOLDERS = ["js", "css", "assets", "lib", "fonts"]
-DEBUG_MODE = True
+DEBUG_MODE = False
 
 # ==============================================================================
 # PARTE 1: API DE APAGADO (KILL SWITCH)

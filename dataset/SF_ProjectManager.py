@@ -1,18 +1,15 @@
 import os
 import sys
 
-# --- FIX DE IMPORTACIÓN ---
+# --- FIX IMPORT ---
 current_file_path = os.path.abspath(__file__)
 current_dir = os.path.dirname(current_file_path)
 project_root = os.path.dirname(current_dir)
 if project_root not in sys.path: sys.path.append(project_root)
 from core.sf_io import FuryFileManager
-# --------------------------
+# ------------------
 
 class SF_ProjectManager:
-    """
-    El 'Manager' ahora crea un bus de datos (SF_LINK) con toda la info del proyecto.
-    """
     def __init__(self):
         pass
 
@@ -20,14 +17,14 @@ class SF_ProjectManager:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "project_name": ("STRING", {"default": "NewMovie", "multiline": False}),
+                "project_name": ("STRING", {"default": "MyMovie_01"}),
             },
             "optional": {
-                "protag_1": ("STRING", {"default": "Hero", "multiline": False}),
-                "protag_2": ("STRING", {"default": "", "multiline": False}),
-                "protag_3": ("STRING", {"default": "", "multiline": False}),
-                "scene_1": ("STRING", {"default": "Main_Loc", "multiline": False}),
-                "scene_2": ("STRING", {"default": "", "multiline": False}),
+                # Campos fijos. Si están vacíos, se ignoran.
+                "protag_1_name": ("STRING", {"default": "Hero"}),
+                "protag_2_name": ("STRING", {"default": ""}),
+                "scene_1_name": ("STRING", {"default": "Main_Loc"}),
+                "scene_2_name": ("STRING", {"default": ""}),
             }
         }
 
@@ -36,27 +33,29 @@ class SF_ProjectManager:
     FUNCTION = "create_bus"
     CATEGORY = "🧩 Studio Fury/📦 Dataset"
 
-    def create_bus(self, project_name, protag_1, protag_2, protag_3, scene_1, scene_2):
-        # Creamos la estructura de carpetas fisica
+    def create_bus(self, project_name, protag_1_name, protag_2_name, scene_1_name, scene_2_name):
         FuryFileManager.get_project_root(project_name)
 
-        # Creamos el Paquete de Datos (El Bus)
-        # Esto viajará por todos los cables
+        # Estructura limpia. Solo añadimos lo que tiene nombre.
+        entities = {}
+
+        if protag_1_name.strip():
+            entities["P1"] = {"name": protag_1_name, "type": "character"}
+        if protag_2_name.strip():
+            entities["P2"] = {"name": protag_2_name, "type": "character"}
+
+        if scene_1_name.strip():
+            entities["S1"] = {"name": scene_1_name, "type": "scene"}
+        if scene_2_name.strip():
+            entities["S2"] = {"name": scene_2_name, "type": "scene"}
+
         bus = {
             "project_name": project_name,
-            "entities": {
-                "protag_1": {"name": protag_1, "type": "character", "prompts": {}},
-                "protag_2": {"name": protag_2, "type": "character", "prompts": {}},
-                "protag_3": {"name": protag_3, "type": "character", "prompts": {}},
-                "scene_1":  {"name": scene_1,  "type": "scene", "prompts": {}},
-                "scene_2":  {"name": scene_2,  "type": "scene", "prompts": {}}
-            }
+            "entities": entities
         }
 
-        # Filtramos los vacíos
-        bus["entities"] = {k: v for k, v in bus["entities"].items() if v["name"].strip() != ""}
-
+        print(f"🧠 [SF Manager] Entidades activas: {list(entities.keys())}")
         return (bus,)
 
 NODE_CLASS_MAPPINGS = { "SF_ProjectManager": SF_ProjectManager }
-NODE_DISPLAY_NAME_MAPPINGS = { "SF_ProjectManager": "🧠 SF Manager (Data Bus)" }
+NODE_DISPLAY_NAME_MAPPINGS = { "SF_ProjectManager": "1️⃣ SF Manager (Definir)" }

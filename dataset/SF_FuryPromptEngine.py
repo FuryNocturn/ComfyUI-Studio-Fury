@@ -10,10 +10,6 @@ if project_root not in sys.path: sys.path.append(project_root)
 # ------------------
 
 class SF_FuryPromptEngine:
-    """
-    Recibe el Bus y permite escribir prompts específicos para cada entidad detectada.
-    Inyecta el Conditioning (Tensores) dentro del Bus.
-    """
     def __init__(self):
         pass
 
@@ -23,17 +19,25 @@ class SF_FuryPromptEngine:
             "required": {
                 "fury_bus": ("SF_LINK",),
                 "clip": ("CLIP",),
-                # Definimos campos genéricos. En el futuro con JS pueden ser dinámicos.
-                # Por ahora, el usuario debe rellenar los que coincidan con su Manager.
+                # Negativo Global: Solo cosas técnicas de imagen, NO anatomía ni contenido.
+                "global_negative": ("STRING", {"default": "low quality, blurry, jpeg artifacts, watermark, text, signature", "multiline": True}),
             },
             "optional": {
-                "P1_Positive": ("STRING", {"multiline": True, "default": "Protag 1 details..."}),
-                "P1_Negative": ("STRING", {"multiline": True, "default": "bad quality..."}),
-                "P2_Positive": ("STRING", {"multiline": True, "default": "Protag 2 details..."}),
-                "P2_Negative": ("STRING", {"multiline": True, "default": "bad quality..."}),
-                "S1_Positive": ("STRING", {"multiline": True, "default": "Scene 1 details..."}),
-                "S1_Negative": ("STRING", {"multiline": True, "default": "bad quality..."}),
-                # Se pueden añadir más si se necesitan
+                # PROTAGONISTA 1
+                "P1_Positive": ("STRING", {"multiline": True, "default": "detailed character description..."}),
+                "P1_Negative": ("STRING", {"multiline": True, "default": ""}), # Específico (ej: "hat, glasses")
+
+                # PROTAGONISTA 2
+                "P2_Positive": ("STRING", {"multiline": True, "default": ""}),
+                "P2_Negative": ("STRING", {"multiline": True, "default": ""}),
+
+                # ESCENA 1
+                "S1_Positive": ("STRING", {"multiline": True, "default": "beautiful scenery..."}),
+                "S1_Negative": ("STRING", {"multiline": True, "default": ""}), # Específico (ej: "cars, animals")
+
+                # ESCENA 2
+                "S2_Positive": ("STRING", {"multiline": True, "default": ""}),
+                "S2_Negative": ("STRING", {"multiline": True, "default": ""}),
             }
         }
 
@@ -42,42 +46,66 @@ class SF_FuryPromptEngine:
     FUNCTION = "process_prompts"
     CATEGORY = "🧩 Studio Fury/📦 Dataset"
 
-    def process_prompts(self, fury_bus, clip, **kwargs):
-        # Clonamos el bus para no alterar el original inadvertidamente
+    def process_prompts(self, fury_bus, clip, global_negative, **kwargs):
         bus = fury_bus.copy()
 
-        # Función auxiliar para codificar
-        def get_conditioning(text):
+        # Función auxiliar para codificar texto a condicionamiento
+        def encode(text):
             tokens = clip.tokenize(text)
             cond, pooled = clip.encode_from_tokens(tokens, return_pooled=True)
             return [[cond, {"pooled_output": pooled}]]
 
-        # Mapeo manual de entradas a entidades (Limitación visual de ComfyUI sin JS avanzado)
-        # P1 -> protag_1, S1 -> scene_1, etc.
-        mapping = {
-            "protag_1": ("P1_Positive", "P1_Negative"),
-            "protag_2": ("P2_Positive", "P2_Negative"),
-            "scene_1":  ("S1_Positive", "S1_Negative"),
-            "scene_2":  ("S2_Positive", "S2_Negative"),
+        # Mapeo de inputs a las claves del bus
+        # (ClaveEntidad : (CampoPositivo, CampoNegativo))
+        input_map = {
+            "P1": ("P1_Positive", "P1_Negative"),
+            "P2": ("P2_Positive", "P2_Negative"),
+            "S1": ("S1_Positive", "S1_Negative"),
+            "S2": ("S2_Positive", "S2_Negative")
         }
 
-        # Procesamiento
-        for entity_key, config in bus["entities"].items():
-            if entity_key in mapping:
-                pos_field, neg_field = mapping[entity_key]
+        # --- LÓGICA DE INYECCIÓN AUTOMÁTICA ---
+        auto_neg_character = "bad anatomy, missing limbs, extra fingers, bad hands, mutated, deformed, amputation"
+        auto_neg_scene = "people, crowd, pedestrians, humans, person, man, woman, character, faces"
 
-                # Obtener texto de los inputs opcionales
-                pos_text = kwargs.get(pos_field, "")
-                neg_text = kwargs.get(neg_field, "")
+        print(f"⚡ [PromptEngine] Procesando prompts inteligentes...")
 
-                # Si hay texto, codificamos y guardamos en el BUS
-                if pos_text:
-                    print(f"⚡ [FuryPrompt] Codificando para {config['name']}...")
-                    config["prompts"]["positive"] = get_conditioning(pos_text)
-                    config["prompts"]["negative"] = get_conditioning(neg_text)
-                    config["prompts"]["raw_pos"] = pos_text # Guardamos texto crudo por si acaso
+        for key, data in bus["entities"].items():
+            # Identificamos qué campos leer
+            fields = input_map.get(key)
+            if not fields: continue
+
+            user_pos = kwargs.get(fields[0], "")
+            user_neg = kwargs.get(fields[1], "")
+
+            # 1. Construcción del Prompt POSITIVO
+            if not user_pos.strip():
+                user_pos = f"high quality {data['type']} of {data['name']}"
+
+            # 2. Construcción del Prompt NEGATIVO (En capas)
+            # Capa 1: Global (Calidad)
+            final_neg = global_negative
+
+            # Capa 2: Específico del Usuario (Si escribió algo)
+            if user_neg.strip():
+                final_neg += f", {user_neg}"
+
+            # Capa 3: Automática por TIPO (Aquí está la magia)
+            if data["type"] == "character":
+                final_neg += f", {auto_neg_character}"
+            elif data["type"] == "scene":
+                final_neg += f", {auto_neg_scene}"
+
+            # Debug para que veas qué está haciendo
+            print(f"   🔹 {data['name']} ({data['type']}):")
+            print(f"      [+] {user_pos[:30]}...")
+            print(f"      [-] ...{final_neg[-50:]}")
+
+            # Codificamos y guardamos en el bus
+            data["cond_pos"] = encode(user_pos)
+            data["cond_neg"] = encode(final_neg)
 
         return (bus,)
 
 NODE_CLASS_MAPPINGS = { "SF_FuryPromptEngine": SF_FuryPromptEngine }
-NODE_DISPLAY_NAME_MAPPINGS = { "SF_FuryPromptEngine": "📝 Fury Prompt Engine" }
+NODE_DISPLAY_NAME_MAPPINGS = { "SF_FuryPromptEngine": "2️⃣ SF Prompt Engine (Smart Layers)" }
