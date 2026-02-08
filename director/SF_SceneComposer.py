@@ -2,84 +2,95 @@ import torch
 import torch.nn.functional as F
 
 class SF_SceneComposer:
-    """
-    Toma un personaje y un fondo, y los fusiona en coordenadas específicas.
-    Genera automáticamente una máscara de atención para la animación.
-    """
-    def __init__(self):
-        pass
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "scene_image": ("IMAGE",),      # El fondo (Output del AssetLoader Escena)
-                "character_image": ("IMAGE",),  # El personaje (Output del AssetLoader Personaje)
-                "x_offset": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 8}),
-                "y_offset": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 8}),
-                "scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 5.0, "step": 0.1}),
+                "scene_image": ("IMAGE",),      # [B, H, W, 3]
+                "character_image": ("IMAGE",),  # [B, H, W, 3]
+                "x_offset": ("INT", {"default": 0, "min": 0, "max": 4096}),
+                "y_offset": ("INT", {"default": 0, "min": 0, "max": 4096}),
+                "scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 5.0}),
+                # Nuevo: Opacidad para fantasmas o integración sutil
+                "opacity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0}),
+            },
+            "optional": {
+                 # Nuevo: Máscara real del personaje si existe
+                "char_mask": ("MASK",),
             }
         }
 
     RETURN_TYPES = ("IMAGE", "MASK")
     RETURN_NAMES = ("composed_image", "fusion_mask")
-    FUNCTION = "compose_scene"
+    FUNCTION = "compose"
     CATEGORY = "🧩 Studio Fury/🎬 Director"
 
-    def compose_scene(self, scene_image, character_image, x_offset, y_offset, scale):
-        # 1. Preparar el Lienzo (Scene)
-        # ComfyUI usa formato [Batch, Height, Width, Channels]
-        B, H, W, C = scene_image.shape
-        canvas = scene_image.clone() # Creamos una copia para no destruir el original
+    def compose(self, scene_image, character_image, x_offset, y_offset, scale, opacity, char_mask=None):
+        # Clonamos fondo
+        canvas = scene_image.clone()
+        B, H, W, C = canvas.shape
 
-        # 2. Procesar el Personaje
-        # Necesitamos cambiar el formato para que Torch pueda redimensionar (permute)
-        # De [B, H, W, C] a [B, C, H, W]
+        # --- ESCALADO ---
+        # Convertimos a [B, C, H, W] para interpolar
         char_tensor = character_image.permute(0, 3, 1, 2)
+        target_h = int(character_image.shape[1] * scale)
+        target_w = int(character_image.shape[2] * scale)
 
-        # Calcular nuevas dimensiones
-        char_h = int(character_image.shape[1] * scale)
-        char_w = int(character_image.shape[2] * scale)
+        char_resized = F.interpolate(char_tensor, size=(target_h, target_w), mode="bilinear")
+        char_resized = char_resized.permute(0, 2, 3, 1) # Volver a [B, H, W, C]
 
-        # Redimensionar (Interpolación Bilineal para suavidad)
-        char_resized = F.interpolate(char_tensor, size=(char_h, char_w), mode="bilinear", align_corners=False)
+        # --- MÁSCARA (ALPHA) ---
+        if char_mask is not None:
+            # Si el usuario conectó una máscara, la escalamos igual que la imagen
+            mask_tensor = char_mask.unsqueeze(0).unsqueeze(0) # [1, 1, H, W]
+            mask_resized = F.interpolate(mask_tensor, size=(target_h, target_w), mode="bilinear")
+            mask_resized = mask_resized.squeeze(0).squeeze(0) # [H, W]
 
-        # Devolver al formato Comfy [B, H, W, C]
-        char_resized = char_resized.permute(0, 2, 3, 1)
+            # Expandir dimensiones para multiplicar con imagen [H, W, 1]
+            alpha = mask_resized.unsqueeze(-1)
+        else:
+            # Si no hay máscara, creamos una cuadrada completa (1.0)
+            alpha = torch.ones((target_h, target_w, 1), device=canvas.device)
 
-        # 3. Composición (Pegar el personaje sobre el fondo)
-        # Definir límites para no salirnos del cuadro
-        y1 = max(0, y_offset)
-        x1 = max(0, x_offset)
-        y2 = min(H, y_offset + char_h)
-        x2 = min(W, x_offset + char_w)
+        # Aplicar opacidad global
+        alpha = alpha * opacity
 
-        # Calcular recortes si el personaje se sale del borde
-        char_y1 = max(0, -y_offset)
-        char_x1 = max(0, -x_offset)
-        char_y2 = char_y1 + (y2 - y1)
-        char_x2 = char_x1 + (x2 - x1)
+        # --- FUSIÓN (ALPHA BLENDING) ---
+        # Coordenadas seguras (Clipping)
+        y1, y2 = max(0, y_offset), min(H, y_offset + target_h)
+        x1, x2 = max(0, x_offset), min(W, x_offset + target_w)
 
-        # Si las dimensiones son válidas, pegamos
+        # Coordenadas relativas al personaje (crop)
+        cy1 = max(0, -y_offset)
+        cy2 = cy1 + (y2 - y1)
+        cx1 = max(0, -x_offset)
+        cx2 = cx1 + (x2 - x1)
+
         if y2 > y1 and x2 > x1:
-            # Pegado simple (Reemplazo de píxeles)
-            # NOTA: En la V2 implementaremos Alpha Blending si el personaje tiene transparencia
-            canvas[:, y1:y2, x1:x2, :] = char_resized[:, char_y1:char_y2, char_x1:char_x2, :]
+            # Región del fondo donde vamos a pintar
+            bg_slice = canvas[:, y1:y2, x1:x2, :]
+            # Región del personaje a pintar
+            fg_slice = char_resized[:, cy1:cy2, cx1:cx2, :]
+            # Región del alpha
+            alpha_slice = alpha[cy1:cy2, cx1:cx2, :]
 
-        # 4. Generación de Máscara (Fusion Mask)
-        # Creamos una máscara negra del tamaño de la escena
-        mask = torch.zeros((1, H, W), dtype=torch.float32)
+            # Fórmula: Pixel = (Foreground * Alpha) + (Background * (1 - Alpha))
+            blended = (fg_slice * alpha_slice) + (bg_slice * (1.0 - alpha_slice))
 
-        # Pintamos de blanco el área donde pusimos al personaje
+            canvas[:, y1:y2, x1:x2, :] = blended
+
+        # Crear máscara de salida para el Animator (solo la forma del personaje en el canvas)
+        output_mask = torch.zeros((H, W), device=canvas.device)
         if y2 > y1 and x2 > x1:
-            mask[:, y1:y2, x1:x2] = 1.0
+             # Aquí ponemos 1s donde está el personaje
+             output_mask[y1:y2, x1:x2] = alpha[cy1:cy2, cx1:cx2, 0]
 
-        return (canvas, mask)
+        return (canvas, output_mask)
 
-NODE_CLASS_MAPPINGS = {
-    "SF_SceneComposer": SF_SceneComposer
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "SF_SceneComposer": "🎨 SF Scene Composer"
-}
+        # --- REGISTRO DEL NODO ---
+        NODE_CLASS_MAPPINGS = {
+            "SF_SceneComposer": SF_SceneComposer
+        }
+        NODE_DISPLAY_NAME_MAPPINGS = {
+            "SF_SceneComposer": "🎬 SF Scene Composer"
+        }

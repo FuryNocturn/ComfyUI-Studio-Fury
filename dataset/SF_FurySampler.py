@@ -1,93 +1,70 @@
 import torch
-import os
-import sys
-import nodes # Importamos nodos estandar de ComfyUI para usar su KSampler internamente
-
-# --- FIX IMPORT ---
-current_file_path = os.path.abspath(__file__)
-current_dir = os.path.dirname(current_file_path)
-project_root = os.path.dirname(current_dir)
-if project_root not in sys.path: sys.path.append(project_root)
-# ------------------
+# Import absoluto
+from core.sf_io import fury_common_ksampler
 
 class SF_FurySampler:
-    """
-    Sampler Manual. Permite seleccionar una entidad específica del bus y generarla.
-    Compatible con el sistema 'Smart Layers' del Prompt Engine.
-    """
-    def __init__(self):
-        pass
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "model": ("MODEL",),
-                "vae": ("VAE",),
-                "charged_bus": ("SF_LINK",), # El bus que viene del Prompt Engine
-                # Selector manual de qué quieres generar ahora mismo
-                "target_entity": (["P1", "P2", "S1", "S2"],),
-                "resolution": (["512x512", "768x768", "512x768", "768x512", "1024x1024", "1280x720", "1920x1080"],),
-                "steps": ("INT", {"default": 20, "min": 1, "max": 100}),
-                "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}),
-                "sampler_name": (nodes.comfy.samplers.KSampler.SAMPLERS, ),
-                "scheduler": (nodes.comfy.samplers.KSampler.SCHEDULERS, ),
+                "charged_bus": ("SF_LINK",),
+                "target_entity_id": ("STRING", {"default": "Hero", "multiline": False}),
+                "resolution": (["512x512", "768x768", "1024x1024", "1280x720", "1920x1080"],),
+                "steps": ("INT", {"default": 20}),
+                "cfg": ("FLOAT", {"default": 8.0}),
+                "sampler_name": (["euler", "dpmpp_2m", "dpmpp_sde", "lms"],),
+                "scheduler": (["normal", "karras", "simple"],),
+                "denoise": ("FLOAT", {"default": 1.0}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0}),
             }
         }
 
     RETURN_TYPES = ("SF_LINK", "IMAGE", "LATENT")
-    RETURN_NAMES = ("fury_bus", "preview_image", "raw_latent")
+    RETURN_NAMES = ("bus_result", "image", "latent")
     FUNCTION = "generate"
     CATEGORY = "🧩 Studio Fury/📦 Dataset"
 
-    def generate(self, model, vae, charged_bus, target_entity, resolution, steps, cfg, sampler_name, scheduler, seed, denoise):
-
-        # 1. Clonamos el bus para no romper nada
+    def generate(self, model, charged_bus, target_entity_id, resolution, steps, cfg, sampler_name, scheduler, denoise, seed):
         bus = charged_bus.copy()
 
-        # 2. Verificar si la entidad existe en el Manager
-        if target_entity not in bus["entities"]:
-            print(f"⚠️ [FurySampler] La entidad {target_entity} no está definida o está vacía.")
-            # Retorno de seguridad (imagen negra)
-            empty_img = torch.zeros(1, 512, 512, 3)
-            empty_lat = {"samples": torch.zeros(1, 4, 64, 64)}
-            return (bus, empty_img, empty_lat)
+        vae = bus.get("runtime", {}).get("vae")
+        if vae is None:
+            raise ValueError("❌ Error: VAE no encontrado en el Bus.")
 
-        entity_data = bus["entities"][target_entity]
-        print(f"🎨 [Manual Mode] Generando: {entity_data['name']}...")
+        target_key = target_entity_id.strip()
+        if target_key not in bus.get("entities", {}):
+            print(f"⚠️ Entidad '{target_key}' no encontrada.")
+            return (bus, torch.zeros(1,512,512,3), {"samples": torch.zeros([1,4,64,64])})
 
-        # 3. Recuperar Conditioning (ACTUALIZADO para Smart Layers)
-        # Antes buscábamos en "prompts", ahora están en "cond_pos" y "cond_neg"
-        if "cond_pos" not in entity_data:
-            raise ValueError(f"Falta procesar los prompts para {entity_data['name']}. Revisa el Prompt Engine.")
+        entity_data = bus["entities"][target_key]
 
-        positive = entity_data["cond_pos"]
-        negative = entity_data["cond_neg"]
-
-        # 4. Configurar Latent
         w, h = map(int, resolution.split('x'))
-        latent = torch.zeros([1, 4, h // 8, w // 8])
-        latent_image = {"samples": latent}
+        latent_image = {"samples": torch.zeros([1, 4, h // 8, w // 8])}
 
-        # 5. Sampling
-        from nodes import common_ksampler
-        samples = common_ksampler(model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=denoise)[0]
+        print(f"🎨 [Sampler] Generando '{target_key}'...")
+        samples = fury_common_ksampler(
+            model, seed, steps, cfg, sampler_name, scheduler,
+            entity_data["cond_pos"], entity_data["cond_neg"],
+            latent_image, denoise=denoise
+        )[0]
 
-        # 6. Decode
         image = vae.decode(samples["samples"])
 
-        # 7. Preparamos el paquete para el SmartSaver
         bus["current_render"] = {
-            "entity_key": target_entity,
+            "entity_key": target_key,
             "entity_name": entity_data["name"],
             "type": entity_data["type"],
-            "latent": samples,
-            "image": image
+            "image": image,
+            "latent": samples
         }
 
         return (bus, image, samples)
 
-NODE_CLASS_MAPPINGS = { "SF_FurySampler": SF_FurySampler }
-NODE_DISPLAY_NAME_MAPPINGS = { "SF_FurySampler": "✨ Fury Manual Sampler" }
+        # --- REGISTRO DEL NODO ---
+        NODE_CLASS_MAPPINGS = {
+            "SF_FurySampler": SF_FurySampler
+        }
+        NODE_DISPLAY_NAME_MAPPINGS = {
+            "SF_FurySampler": "🎨 SF Fury Sampler (Test)"
+        }

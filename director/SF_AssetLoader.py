@@ -1,17 +1,7 @@
 import torch
 import os
-import sys
-
-# --- FIX DE IMPORTACIÓN ---
-current_file_path = os.path.abspath(__file__)
-current_dir = os.path.dirname(current_file_path)
-project_root = os.path.dirname(current_dir)
-
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
+# Import absoluto
 from core.sf_io import FuryFileManager
-# --------------------------
 
 class SF_AssetLoader:
     def __init__(self):
@@ -37,14 +27,18 @@ class SF_AssetLoader:
 
         if data is None:
             empty_img = torch.zeros(1, 512, 512, 3)
-            empty_lat = {"samples": torch.zeros(1, 4, 64, 64)}
+            empty_lat = {"samples": torch.zeros([1, 4, 64, 64])}
             return (empty_img, empty_lat)
 
-        return (data["preview_image"], data["latent"])
+        image = data.get("image", data.get("preview_image"))
+        latent = data.get("latent")
 
-NODE_CLASS_MAPPINGS = {
-    "SF_AssetLoader": SF_AssetLoader
-}
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "SF_AssetLoader": "📂 SF Asset Loader"
-}
+        return (image, latent)
+
+        # --- REGISTRO DEL NODO ---
+        NODE_CLASS_MAPPINGS = {
+            "SF_AssetLoader": SF_AssetLoader
+        }
+        NODE_DISPLAY_NAME_MAPPINGS = {
+            "SF_AssetLoader": "📂 SF Asset Loader"
+        }

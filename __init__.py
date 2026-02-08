@@ -5,156 +5,140 @@ import importlib.util
 import traceback
 import folder_paths
 import filecmp
-# --- NUEVOS IMPORTS NECESARIOS PARA EL BOTÓN DE APAGADO ---
+import sys
+import inspect
+
 from server import PromptServer
 from aiohttp import web
 
 # ==============================================================================
-# CONFIGURACIÓN DEL SISTEMA
+#  CONFIGURACIÓN
 # ==============================================================================
-
 EXTENSION_NAME = "StudioFury"
-# Asegúrate de que estas carpetas existan o el sistema dará error al cargar
-NODE_CATEGORIES = ["prompts", "dataset", "director"] # Añade aquí tus categorías futuras (images, utils...)
-ASSET_FOLDERS = ["js", "css", "assets", "lib", "fonts"]
-DEBUG_MODE = False
+DEBUG_MODE = True
+
+# Archivos a ignorar para que no intente cargarlos como nodos
+IGNORE_FILES = {"__init__.py", "sf_io.py", "setup.py", "install.py"}
 
 # ==============================================================================
-# PARTE 1: API DE APAGADO (KILL SWITCH)
-# Esta función escucha la petición del botón rojo y cierra Python.
+#  HELPERS
+# ==============================================================================
+# Inyectar el root al path para que funcionen los imports relativos y absolutos
+node_root = os.path.dirname(os.path.abspath(__file__))
+if node_root not in sys.path:
+    sys.path.append(node_root)
+
+# ==============================================================================
+#  1. API KILL SWITCH
 # ==============================================================================
 try:
     routes = PromptServer.instance.routes
 
     @routes.post('/studiofury/system/shutdown')
     async def fury_shutdown(request):
-        """
-        Recibe la orden del navegador y mata el proceso de Python inmediatamente.
-        """
-        print("\n🛑 [StudioFury] Recibida orden de apagado. Cerrando sistema...")
-
-        # Preparamos una respuesta rápida
-        resp = web.Response(text="Server Killed")
-
-        # Forzamos el cierre del proceso inmediatamente
+        print(f"\n🛑 [{EXTENSION_NAME}] Apagando servidor...")
+        sys.stdout.flush()
         os._exit(0)
 
-        return resp
+    @routes.post('/studiofury/system/restart')
+    async def fury_restart(request):
+        print(f"\n🔄 [{EXTENSION_NAME}] Reiniciando servidor...")
+        sys.stdout.flush()
+        # Esta instrucción reinicia Python completamente
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
 except Exception as e:
-    print(f"⚠️ [StudioFury] No se pudo cargar la API de apagado (¿Quizás ComfyUI está desactualizado?): {e}")
+    print(f"⚠️ Error cargando APIs de sistema: {e}")
 
 # ==============================================================================
-# PARTE 2: GESTOR DE ASSETS (Frontend / Javascript)
-# Mantiene la estructura de carpetas original para evitar conflictos de nombres.
+#  2. INSTALADOR DE ASSETS
 # ==============================================================================
+WEB_DIRECTORY = "./interface/js"
+
 def install_web_assets():
-    root_dir = os.path.dirname(os.path.realpath(__file__))
+    try:
+        current_dir = os.path.dirname(__file__)
+        js_folder = os.path.join(current_dir, "js")
+        comfy_path = os.path.dirname(folder_paths.__file__)
+        dest_folder = os.path.join(comfy_path, "web", "extensions", EXTENSION_NAME)
 
-    # Destino base: ComfyUI/web/extensions/StudioFury
-    comfy_path = os.path.dirname(folder_paths.__file__)
-    dest_root = os.path.join(comfy_path, "web", "extensions", EXTENSION_NAME)
-
-    # Limpieza preventiva (opcional, pero recomendada para evitar basura vieja)
-    # Si prefieres no borrar todo cada vez, puedes comentar estas líneas,
-    # pero ayuda a eliminar archivos que hayas borrado en tu proyecto.
-    if os.path.exists(dest_root):
-        # Solo borramos si estamos seguros de que es nuestra carpeta
+        if os.path.exists(js_folder):
+            if not os.path.exists(dest_folder): os.makedirs(dest_folder)
+            for file in os.listdir(js_folder):
+                if file.endswith(".js") or file.endswith(".css"):
+                    src = os.path.join(js_folder, file)
+                    dst = os.path.join(dest_folder, file)
+                    if not os.path.exists(dst) or not filecmp.cmp(src, dst):
+                        shutil.copy(src, dst)
+                        if DEBUG_MODE: print(f"⚡ Asset actualizado: {file}")
+    except Exception:
         pass
 
-    print(f"📦 [StudioFury] Escaneando assets jerárquicos...")
-
-    copied_count = 0
-
-    # Recorremos el proyecto
-    for root, dirs, files in os.walk(root_dir):
-        # Filtros de seguridad
-        if "__pycache__" in root or ".git" in root or "web/extensions" in root:
-            continue
-
-        # Revisamos las subcarpetas de la ruta actual
-        for dir_name in dirs:
-            # Si encontramos una carpeta de assets (js, css, etc.)
-            if dir_name in ASSET_FOLDERS:
-                source_folder = os.path.join(root, dir_name)
-
-                # --- LA MAGIA: Calculamos la ruta relativa ---
-                # Esto convierte "C:/.../StudioFury/prompts/js" en "prompts/js"
-                relative_path = os.path.relpath(source_folder, root_dir)
-
-                # Creamos el destino manteniendo esa ruta: ".../extensions/StudioFury/prompts/js"
-                target_folder = os.path.join(dest_root, relative_path)
-
-                if not os.path.exists(target_folder):
-                    os.makedirs(target_folder)
-
-                # Copiamos los archivos
-                for file in os.listdir(source_folder):
-                    src_file = os.path.join(source_folder, file)
-                    dst_file = os.path.join(target_folder, file)
-
-                    # Solo archivos, ignoramos sub-subcarpetas por ahora para simplificar
-                    if os.path.isfile(src_file):
-                        if not os.path.exists(dst_file) or not filecmp.cmp(src_file, dst_file):
-                            shutil.copy(src_file, dst_file)
-                            copied_count += 1
-                            if DEBUG_MODE:
-                                print(f"   -> Copiado: {relative_path}/{file}")
-
-    if copied_count > 0:
-        print(f"✅ [StudioFury] Actualizados {copied_count} archivos.")
-
 # ==============================================================================
-# PARTE 3: CARGADOR DE NODOS (Backend / Python)
+#  3. CARGADOR INTELIGENTE (RECURSIVO + AUTO-REGISTRO)
 # ==============================================================================
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
 def load_nodes():
-    global NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
-    root_dir = os.path.dirname(os.path.realpath(__file__))
+    print(f"\n🧩 [{EXTENSION_NAME}] Iniciando búsqueda profunda de nodos...")
 
-    print(f"\n🚀 [StudioFury] Cargando nodos...")
+    # Recorremos todo el directorio recursivamente
+    for root, dirs, files in os.walk(node_root):
+        # Ignorar carpetas ocultas o de cache
+        if "__pycache__" in root or ".git" in root: continue
 
-    for category in NODE_CATEGORIES:
-        category_path = os.path.join(root_dir, category)
-
-        if not os.path.exists(category_path):
-            continue
-
-        files = os.listdir(category_path)
         for file in files:
-            if not file.endswith(".py") or file.startswith("__"):
-                continue
+            if file.endswith(".py") and file not in IGNORE_FILES:
+                module_path = os.path.join(root, file)
+                module_name = os.path.splitext(file)[0]
 
-            module_name = os.path.splitext(file)[0]
-            file_path = os.path.join(category_path, file)
+                try:
+                    # Cargar módulo
+                    spec = importlib.util.spec_from_file_location(module_name, module_path)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
 
-            try:
-                spec = importlib.util.spec_from_file_location(module_name, file_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
+                    nodes_in_file = 0
 
-                if hasattr(module, "NODE_CLASS_MAPPINGS"):
-                    NODE_CLASS_MAPPINGS.update(module.NODE_CLASS_MAPPINGS)
-                if hasattr(module, "NODE_DISPLAY_NAME_MAPPINGS"):
-                    NODE_DISPLAY_NAME_MAPPINGS.update(module.NODE_DISPLAY_NAME_MAPPINGS)
+                    # A. Si el archivo ya tiene mapeos, úsalos
+                    if hasattr(module, "NODE_CLASS_MAPPINGS"):
+                        for name, cls in module.NODE_CLASS_MAPPINGS.items():
+                            NODE_CLASS_MAPPINGS[name] = cls
+                            nodes_in_file += 1
+                        if hasattr(module, "NODE_DISPLAY_NAME_MAPPINGS"):
+                            NODE_DISPLAY_NAME_MAPPINGS.update(module.NODE_DISPLAY_NAME_MAPPINGS)
 
-                if DEBUG_MODE: print(f"   ✅ Nodo cargado: {module_name}")
+                    # B. Si NO tiene mapeos, búscalos automáticamente (Introspección)
+                    else:
+                        for name, obj in inspect.getmembers(module):
+                            if inspect.isclass(obj):
+                                # Verificamos si parece un nodo de ComfyUI
+                                if hasattr(obj, "INPUT_TYPES") and hasattr(obj, "RETURN_TYPES"):
+                                    # Evitar registrar clases importadas de otros sitios
+                                    if obj.__module__ == module.__name__:
+                                        # Registrar
+                                        key_name = name
+                                        NODE_CLASS_MAPPINGS[key_name] = obj
 
-            except Exception as e:
-                if DEBUG_MODE:
-                    print(f"\n❌ [StudioFury] ERROR en {module_name}:")
-                    traceback.print_exc()
-                    print("---------------------------------------------------\n")
+                                        # Crear nombre bonito
+                                        fancy_name = "🧩 SF " + name.replace("SF_", "").replace("_", " ")
+                                        NODE_DISPLAY_NAME_MAPPINGS[key_name] = fancy_name
+
+                                        nodes_in_file += 1
+                                        if DEBUG_MODE: print(f"   🪄 Auto-registrado: {fancy_name}")
+
+                    if nodes_in_file > 0 and DEBUG_MODE:
+                        print(f"   ✅ {file}: {nodes_in_file} nodos activos.")
+
+                except Exception as e:
+                    print(f"   ❌ Error en {file}: {e}")
+                    # traceback.print_exc() # Descomentar para ver error detallado
 
 # ==============================================================================
-# EJECUCIÓN
+#  EJECUCIÓN
 # ==============================================================================
 install_web_assets()
 load_nodes()
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
-
-# NO DEFINIMOS WEB_DIRECTORY.
-# Al no definirlo, ComfyUI no intentará sobrescribir tu trabajo.
-# Simplemente leerá lo que 'install_web_assets' colocó en web/extensions/StudioFury.
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
