@@ -3,7 +3,7 @@
 ![Python Version](https://img.shields.io/badge/python-3.12%2B-blue)
 ![ComfyUI](https://img.shields.io/badge/ComfyUI-Custom_Node-green)
 ![License](https://img.shields.io/github/license/FuryNocturn/ComfyUI-Studio-Fury)
-![Version](https://img.shields.io/badge/version-1.0.0--r2-orange)
+![Version](https://img.shields.io/badge/version-2.0.1-orange)
 
 ### Pro AI Art Direction & Advanced Workflows for ComfyUI
 
